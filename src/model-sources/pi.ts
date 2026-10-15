@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Api, Context, Model } from "@earendil-works/pi-ai";
+import type { Api, Context, Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import {
   ModelSourceError,
@@ -16,6 +16,7 @@ export interface PiModel {
   name: string;
   provider: string;
   reasoning: boolean;
+  baseUrl?: string;
 }
 
 export interface PiAssistantMessage {
@@ -23,9 +24,6 @@ export interface PiAssistantMessage {
   stopReason?: string;
   errorMessage?: string;
 }
-
-// One id per process: session-routed providers require it, others ignore it.
-const standaloneSessionId = randomUUID();
 
 export interface PiRuntime {
   getAvailable(providerId?: string): Promise<readonly PiModel[]>;
@@ -38,7 +36,7 @@ export interface PiRuntime {
       maxTokens: number;
       maxRetries: number;
       signal: AbortSignal;
-      sessionId: string;
+      sessionId?: string;
     },
   ): Promise<PiAssistantMessage>;
 }
@@ -108,6 +106,18 @@ export class PiModelSource implements ModelSource {
     );
 
     try {
+      const completion = {
+        maxTokens: request.maxOutputTokens,
+        maxRetries: request.maxRetries,
+        signal: request.abortSignal,
+      };
+
+      if (request.selection.profile && request.selection.profile !== "off") {
+        Object.assign(completion, { reasoning: request.selection.profile });
+      }
+
+      if (needsOpenCodeSession(model)) Object.assign(completion, { sessionId: randomUUID() });
+
       const response = await resources.runtime.completeSimple(
         model,
         {
@@ -120,9 +130,7 @@ export class PiModelSource implements ModelSource {
             },
           ],
         },
-        request.selection.profile && request.selection.profile !== "off"
-          ? { reasoning: request.selection.profile, maxTokens: request.maxOutputTokens, maxRetries: request.maxRetries, signal: request.abortSignal, sessionId: standaloneSessionId }
-          : { maxTokens: request.maxOutputTokens, maxRetries: request.maxRetries, signal: request.abortSignal, sessionId: standaloneSessionId },
+        completion,
       );
 
       if (response.stopReason === "error" || response.stopReason === "aborted") {
@@ -184,7 +192,43 @@ export class PiModelSource implements ModelSource {
   }
 }
 
-async function createPiRuntime(): Promise<PiRuntimeResources> {
+// OpenCode reads sessionId as x-opencode-session. Codex keys its WebSocket cache
+// by that id, and OpenAI-compatible providers use it for cache affinity.
+const OPENCODE_HOST = "opencode.ai";
+
+function needsOpenCodeSession(model: PiModel): boolean {
+  return model.provider === "opencode"
+    || model.provider === "opencode-go"
+    || (model.baseUrl !== undefined && openCodeHost(model.baseUrl));
+}
+
+function openCodeHost(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname === OPENCODE_HOST;
+  } catch {
+    return false;
+  }
+}
+
+interface PiEngine {
+  getAvailable(providerId?: string): Promise<readonly PiModel[]>;
+  getModel(providerId: string, modelId: string): PiModel | undefined;
+  completeSimple(
+    model: Model<Api>,
+    context: Context,
+    options: {
+      reasoning?: ThinkingLevel;
+      maxTokens: number;
+      maxRetries: number;
+      signal: AbortSignal;
+      sessionId?: string;
+    },
+  ): Promise<PiAssistantMessage>;
+}
+
+export async function createPiRuntime(engine?: PiEngine): Promise<PiRuntimeResources> {
+  if (engine) return adaptPiRuntime(engine, () => []);
+
   const [{ ModelRuntime }, { getSupportedThinkingLevels }] = await Promise.all([
     import("@earendil-works/pi-coding-agent"),
     import("@earendil-works/pi-ai"),
@@ -192,6 +236,18 @@ async function createPiRuntime(): Promise<PiRuntimeResources> {
 
   const runtime = await ModelRuntime.create({ allowModelNetwork: false });
 
+  return adaptPiRuntime(runtime, (model) => {
+    // SAFETY: This model came from ModelRuntime.getModel, which returns Model<Api>.
+    const selectedModel = model as Model<Api>;
+
+    return getSupportedThinkingLevels(selectedModel);
+  });
+}
+
+function adaptPiRuntime(
+  runtime: PiEngine,
+  profiles: (model: PiModel) => readonly string[],
+): PiRuntimeResources {
   return {
     runtime: {
       getAvailable: (providerId) => runtime.getAvailable(providerId),
@@ -204,21 +260,17 @@ async function createPiRuntime(): Promise<PiRuntimeResources> {
           maxTokens: options.maxTokens,
           maxRetries: options.maxRetries,
           signal: options.signal,
-          sessionId: options.sessionId,
         };
 
         if (options.reasoning) Object.assign(runtimeOptions, {
           reasoning: z.enum(["minimal", "low", "medium", "high", "xhigh", "max"]).parse(options.reasoning),
         });
 
+        if (options.sessionId) Object.assign(runtimeOptions, { sessionId: options.sessionId });
+
         return runtime.completeSimple(selectedModel, context, runtimeOptions);
       },
     },
-    profiles: (model) => {
-      // SAFETY: This model came from ModelRuntime.getModel, which returns Model<Api>.
-      const selectedModel = model as Model<Api>;
-
-      return getSupportedThinkingLevels(selectedModel);
-    },
+    profiles,
   };
 }

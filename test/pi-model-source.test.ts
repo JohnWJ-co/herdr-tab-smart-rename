@@ -2,7 +2,9 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
 import {
+  createPiRuntime,
   PiModelSource,
+  type PiModel,
   type PiRuntime,
 } from "../src/model-sources/pi.ts";
 import { ModelSourceError } from "../src/model-source.ts";
@@ -90,10 +92,7 @@ test("Pi completion uses Pi-owned model and thinking configuration", async () =>
   const call = calls[0];
 
   assert.ok(call);
-  const { sessionId, ...rest } = call.options;
-
-  assert.ok(z.string().min(1).parse(sessionId).length > 0);
-  assert.deepEqual(rest, {
+  assert.deepEqual(call.options, {
     reasoning: "high",
     maxTokens: 123,
     maxRetries: 1,
@@ -114,13 +113,29 @@ test("Pi completion uses Pi-owned model and thinking configuration", async () =>
   });
 });
 
-test("Pi forwards a stable per-process session id for session-routed providers", async () => {
-  const seen: Array<string | undefined> = [];
+test("Pi forwards a fresh OpenCode session id and omits it for other providers", async () => {
+  const calls: Array<{ provider: string; sessionId: string | undefined; forwarded: boolean }> = [];
 
-  const adapter = source({
-    ...runtimeWithModel(),
-    completeSimple: async (_selected, _context, options) => {
-      seen.push(options.sessionId);
+  const models: readonly PiModel[] = [
+    { provider: "opencode", id: "fable", name: "Fable", reasoning: false, baseUrl: "https://example.com/models" },
+    { provider: "opencode-go", id: "minimax", name: "MiniMax", reasoning: false, baseUrl: "https://opencode.ai/zen/go" },
+    { provider: "custom", id: "hosted", name: "Hosted", reasoning: false, baseUrl: "https://opencode.ai/zen" },
+    { provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet", reasoning: false, baseUrl: "https://api.anthropic.com" },
+    { provider: "openai-codex", id: "gpt-5-codex", name: "Codex", reasoning: false, baseUrl: "https://chatgpt.com/backend-api/codex" },
+    { provider: "openrouter", id: "router", name: "Router", reasoning: false, baseUrl: "https://openrouter.ai/api/v1" },
+    { provider: "bait", id: "bait", name: "Bait", reasoning: false, baseUrl: "https://example.com/opencode.ai/v1" },
+  ];
+
+  // The spy is the engine under createPiRuntime. Dropping its sessionId copy fails this test.
+  const resources = await createPiRuntime({
+    getAvailable: async (provider) => models.filter((item) => !provider || item.provider === provider),
+    getModel: (provider, id) => models.find((item) => item.provider === provider && item.id === id),
+    completeSimple: async (model, _context, options) => {
+      calls.push({
+        provider: model.provider,
+        sessionId: options.sessionId,
+        forwarded: Object.hasOwn(options, "sessionId"),
+      });
 
       return {
         content: [{ type: "text", text: '{"tab":"Repair Socket Reconnect","reason":"task"}' }],
@@ -129,13 +144,9 @@ test("Pi forwards a stable per-process session id for session-routed providers",
     },
   });
 
+  const adapter = new PiModelSource(async () => resources);
+
   const request = {
-    selection: {
-      version: 1 as const,
-      source: "pi" as const,
-      provider: "anthropic",
-      model: "claude-sonnet",
-    },
     context: { project: "Plugin", userRequests: ["Fix reconnect"] },
     system: "JSON only",
     prompt: "Name this task",
@@ -144,12 +155,43 @@ test("Pi forwards a stable per-process session id for session-routed providers",
     abortSignal: AbortSignal.timeout(1_000),
   };
 
-  await adapter.complete({ ...request });
-  await adapter.complete({ ...request });
+  await adapter.complete({ ...request, selection: { version: 1, source: "pi", provider: "opencode", model: "fable" } });
+  await adapter.complete({ ...request, selection: { version: 1, source: "pi", provider: "opencode", model: "fable" } });
+  await adapter.complete({ ...request, selection: { version: 1, source: "pi", provider: "opencode-go", model: "minimax" } });
+  await adapter.complete({ ...request, selection: { version: 1, source: "pi", provider: "custom", model: "hosted" } });
+  await adapter.complete({ ...request, selection: { version: 1, source: "pi", provider: "anthropic", model: "claude-sonnet" } });
+  await adapter.complete({ ...request, selection: { version: 1, source: "pi", provider: "openai-codex", model: "gpt-5-codex" } });
+  await adapter.complete({ ...request, selection: { version: 1, source: "pi", provider: "openrouter", model: "router" } });
+  await adapter.complete({ ...request, selection: { version: 1, source: "pi", provider: "bait", model: "bait" } });
 
-  assert.equal(seen.length, 2);
-  assert.ok(seen[0]);
-  assert.equal(seen[0], seen[1]);
+  const sessionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const openCodeCalls = calls.filter((call) => call.provider === "opencode");
+  const firstOpenCode = openCodeCalls[0];
+  const secondOpenCode = openCodeCalls[1];
+
+  assert.ok(firstOpenCode?.sessionId);
+  assert.ok(secondOpenCode?.sessionId);
+  assert.match(firstOpenCode.sessionId, sessionIdPattern);
+  assert.match(secondOpenCode.sessionId, sessionIdPattern);
+  assert.notEqual(firstOpenCode.sessionId, secondOpenCode.sessionId);
+  assert.equal(firstOpenCode.forwarded, true);
+  assert.equal(secondOpenCode.forwarded, true);
+
+  for (const provider of ["opencode-go", "custom"]) {
+    const call = calls.find((item) => item.provider === provider);
+
+    assert.ok(call?.sessionId);
+    assert.match(call.sessionId, sessionIdPattern);
+    assert.equal(call.forwarded, true);
+  }
+
+  for (const provider of ["anthropic", "openai-codex", "openrouter", "bait"]) {
+    const call = calls.find((item) => item.provider === provider);
+
+    assert.ok(call);
+    assert.equal(call.sessionId, undefined);
+    assert.equal(call.forwarded, false);
+  }
 });
 
 test("Pi failures are fail-closed and secret-free", async () => {

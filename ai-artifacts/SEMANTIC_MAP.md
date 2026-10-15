@@ -28,7 +28,7 @@ Read [naming flow](architecture/naming-flow.md) for the call sequence and [owner
 | Direct discovery and validation | [direct.ts](../src/model-sources/direct.ts) | [setup.test.ts](../test/setup.test.ts), [model-namer.test.ts](../test/model-namer.test.ts) |
 | Direct defaults, configuration, prompt loading, completion transport | [provider-registry.ts](../src/provider-registry.ts), [provider.ts](../src/provider.ts) | [provider-registry.test.ts](../test/provider-registry.test.ts), [provider.test.ts](../test/provider.test.ts) |
 | Common response decoding and label validation | [model-output.ts](../src/effect/model-output.ts), [errors.ts](../src/effect/errors.ts), [domain.ts](../src/domain.ts) | [provider.test.ts](../test/provider.test.ts), [model-namer.test.ts](../test/model-namer.test.ts) |
-| Pi authenticated discovery and completion | [pi.ts](../src/model-sources/pi.ts) | [pi-model-source.test.ts](../test/pi-model-source.test.ts) |
+| Pi authenticated discovery, completion, and OpenCode-only session ids | [pi.ts](../src/model-sources/pi.ts) | [pi-model-source.test.ts](../test/pi-model-source.test.ts) |
 | OpenCode discovery, denied tools, cancellation, cleanup | [opencode.ts](../src/model-sources/opencode.ts) | [opencode-model-source.test.ts](../test/opencode-model-source.test.ts) |
 | Real Pi and OpenCode requests through a local fake provider | Same adapters | Opt-in [harness-runtime.test.ts](../test/harness-runtime.test.ts) |
 
