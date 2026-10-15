@@ -43,6 +43,8 @@ A selected-source error is reported as a failure. There is no automatic fallback
 
 The Pi adapter uses Pi's public runtime rather than copying credentials into Smart Rename's selection file. `allowModelNetwork: false` configures runtime creation; it does not make the eventual provider completion offline.
 
+Each completion for OpenCode, OpenCode Go, or a base URL hosted at `opencode.ai` sends a new `sessionId` so Pi can set `x-opencode-session`. Every other provider omits `sessionId`. Codex uses that value as a WebSocket cache key, and OpenAI-compatible providers use it for cache affinity.
+
 OpenCode may still expose tool definitions to the provider. Session permissions are the execution boundary, not an assumption that the prompt contains no tools. The adapter passes the request abort signal to provider discovery, tool discovery, session creation, prompt, and deletion. Cleanup is best-effort: deletion can fail, including when the same signal is already aborted, but `finally` still closes the owned server.
 
 Evidence: [Pi adapter](../../src/model-sources/pi.ts), [OpenCode adapter](../../src/model-sources/opencode.ts), [Pi adapter tests](../../test/pi-model-source.test.ts), [OpenCode adapter tests](../../test/opencode-model-source.test.ts), and opt-in [real-runtime tests](../../test/harness-runtime.test.ts).
