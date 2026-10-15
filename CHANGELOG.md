@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.4](https://github.com/iurysza/herdr-tab-smart-rename/compare/v0.6.3...v0.6.4) (2026-10-15)
+
+
+### Bug Fixes
+
+* send Pi session ids only for OpenCode ([#57](https://github.com/iurysza/herdr-tab-smart-rename/issues/57)) ([b23c28c](https://github.com/iurysza/herdr-tab-smart-rename/commit/b23c28c03d6360a16d9f58600df09f5ce8b29aac))
+
 ## [0.6.3](https://github.com/iurysza/herdr-tab-smart-rename/compare/v0.6.2...v0.6.3) (2026-10-15)
 
 
