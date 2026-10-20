@@ -1,17 +1,15 @@
 id = "tab-smart-rename"
 name = "Smart Rename"
 version = "0.6.4"
-min_herdr_version = "0.7.0"
+min_herdr_version = "0.7.5"
 description = "Context-aware names for Herdr workspaces and task tabs."
 platforms = ["linux", "macos", "windows"]
 
 [[build]]
 command = ["bun", "install", "--production", "--frozen-lockfile"]
 
-# The worker is a detached process, so it used to be lost on a server restart.
-# `start` is idempotent: it no-ops when a worker for this socket is already up.
 [[startup]]
-command = ["bun", "src/cli.ts", "start"]
+command = ["bun", "src/cli.ts", "start", "--autostart"]
 
 [[actions]]
 id = "start"
